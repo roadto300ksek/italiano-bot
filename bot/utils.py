@@ -18,24 +18,35 @@ def get_main_keyboard():
     return InlineKeyboardMarkup(keyboard)
 
 async def generate_audio(text: str, lang: str = "it") -> io.BytesIO:
-    try:
-        audio_bytes = await asyncio.to_thread(
-            _generate_gtts_audio, text, lang
-        )
-        return audio_bytes
-    except Exception as e:
-        logging.error(f"TTS ошибка: {e}")
-        return None
+    # Пытаемся сгенерировать аудио с повторными попытками
+    max_attempts = 3
+    for attempt in range(max_attempts):
+        try:
+            # Ждём 2 секунды перед каждым запросом, чтобы избежать 429
+            await asyncio.sleep(2)
+            audio_bytes = await asyncio.to_thread(
+                _generate_gtts_audio, text, lang
+            )
+            if audio_bytes:
+                logging.info("Аудио успешно создано")
+                return audio_bytes
+        except Exception as e:
+            logging.warning(f"Попытка {attempt+1} TTS не удалась: {e}")
+            if attempt == max_attempts - 1:
+                logging.error(f"TTS ошибка после {max_attempts} попыток: {e}")
+                return None
+            # Ждём дополнительно перед повторной попыткой
+            await asyncio.sleep(3)
+    return None
 
 def _generate_gtts_audio(text: str, lang: str) -> io.BytesIO:
-    tts_lang = lang if lang else "it"
-    tts = gTTS(text=text, lang=tts_lang, slow=False)
+    tts = gTTS(text=text, lang=lang, slow=False)
     audio_fp = io.BytesIO()
     tts.write_to_fp(audio_fp)
     audio_fp.seek(0)
     return audio_fp
 
-async def ask_deepseek(messages, timeout=30):  # ← тут теперь 30 секунд
+async def ask_deepseek(messages, timeout=30):
     try:
         response = await asyncio.wait_for(
             asyncio.to_thread(
