@@ -1,10 +1,9 @@
-import json
-import logging
 import asyncio
-from flask import Flask, request
-from telegram import Update
+import logging
+import threading
+from flask import Flask
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, CallbackQueryHandler
-from bot.config import TELEGRAM_TOKEN, WEBHOOK_URL
+from bot.config import TELEGRAM_TOKEN
 from bot.handlers import (
     start, help_command, clear, cancel,
     handle_message, clear_history_callback,
@@ -15,13 +14,10 @@ from bot.handlers import (
 
 logging.basicConfig(level=logging.INFO)
 
-# Flask-приложение
 app = Flask(__name__)
 
-# Создаём Application для Telegram
 application = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
 
-# Регистрируем обработчики
 application.add_handler(CommandHandler("start", start))
 application.add_handler(CommandHandler("help", help_command))
 application.add_handler(CommandHandler("clear", clear))
@@ -34,36 +30,18 @@ application.add_handler(CallbackQueryHandler(back_to_main_callback, pattern="^ba
 application.add_handler(CallbackQueryHandler(ask_grammar_callback, pattern="^ask_grammar$"))
 application.add_handler(CallbackQueryHandler(random_word_callback, pattern="^random_word$"))
 
-# --- Единый event loop для всего приложения ---
-# Создаём новый цикл событий и устанавливаем его для текущего потока
-loop = asyncio.new_event_loop()
-asyncio.set_event_loop(loop)
+def start_polling():
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    loop.run_until_complete(application.initialize())
+    loop.run_until_complete(application.start())
+    loop.run_until_complete(application.updater.bot.delete_webhook())
+    loop.run_until_complete(application.updater.start_polling())
+    logging.info("Polling started")
+    loop.run_forever()
 
-async def init_bot():
-    """Инициализация и запуск бота, установка вебхука."""
-    await application.initialize()
-    await application.start()
-    await application.bot.set_webhook(url=WEBHOOK_URL)
-    logging.info("Bot initialized and webhook set.")
-
-# Запускаем инициализацию в нашем цикле
-loop.run_until_complete(init_bot())
-
-@app.route('/webhook', methods=['POST'])
-def webhook():
-    """Принимает обновления от Telegram и передаёт их боту."""
-    data = request.get_data().decode()
-    update = Update.de_json(json.loads(data), application.bot)
-    # Планируем обработку обновления в том же цикле, где запущен бот
-    future = asyncio.run_coroutine_threadsafe(application.process_update(update), loop)
-    # Ожидаем завершения обработки (не блокирует другие запросы сильно, т.к. бот обрабатывает по одному)
-    future.result()
-    return 'ok', 200
+threading.Thread(target=start_polling, daemon=True).start()
 
 @app.route('/')
 def index():
     return 'Bot is running!'
-import os
-
-if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)))
