@@ -1,5 +1,4 @@
 import io
-import io
 import asyncio
 import logging
 from gtts import gTTS
@@ -19,7 +18,6 @@ def get_main_keyboard():
     return InlineKeyboardMarkup(keyboard)
 
 async def generate_audio(text: str, lang: str = "it") -> io.BytesIO:
-    """Генерация голоса через gTTS (синхронная, обёрнута в asyncio)."""
     try:
         audio_bytes = await asyncio.to_thread(
             _generate_gtts_audio, text, lang
@@ -30,7 +28,6 @@ async def generate_audio(text: str, lang: str = "it") -> io.BytesIO:
         return None
 
 def _generate_gtts_audio(text: str, lang: str) -> io.BytesIO:
-    """Синхронная генерация аудио через gTTS."""
     tts_lang = lang if lang else "it"
     tts = gTTS(text=text, lang=tts_lang, slow=False)
     audio_fp = io.BytesIO()
@@ -38,7 +35,7 @@ def _generate_gtts_audio(text: str, lang: str) -> io.BytesIO:
     audio_fp.seek(0)
     return audio_fp
 
-async def ask_deepseek(messages, timeout=15):
+async def ask_deepseek(messages, timeout=30):  # ← тут теперь 30 секунд
     try:
         response = await asyncio.wait_for(
             asyncio.to_thread(

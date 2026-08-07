@@ -16,7 +16,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["waiting_for_grammar"] = False
     context.user_data.pop("msg_timestamps", None)
     context.user_data.pop("daily", None)
-    context.user_data.pop("shown_words", None)  # очищаем список показанных слов
+    context.user_data.pop("shown_words", None)
     await update.message.reply_text(
         "🇮🇹 Ciao! 🇷🇺 Привет!\nЯ — твой репетитор итальянского. Пиши что хочешь, я помогу.\nИспользуй кнопки ниже.",
         reply_markup=get_main_keyboard()
@@ -33,7 +33,7 @@ async def clear(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["history"] = []
     context.user_data["waiting_for_grammar"] = False
     context.user_data.pop("msg_timestamps", None)
-    context.user_data.pop("shown_words", None)  # очищаем список показанных слов
+    context.user_data.pop("shown_words", None)
     await update.message.reply_text("🧹 История очищена!", reply_markup=get_main_keyboard())
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -78,7 +78,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     messages = [{"role": "system", "content": system_prompt}] + history + [{"role": "user", "content": user_text}]
 
     try:
-        answer = await ask_deepseek(messages, timeout=20)
+        answer = await ask_deepseek(messages, timeout=30)  # ← тут 30
         answer = remove_markdown(answer)
         context.user_data["history"].append({"role": "user", "content": user_text})
         context.user_data["history"].append({"role": "assistant", "content": answer})
@@ -162,7 +162,7 @@ async def explain_grammar(update: Update, context: ContextTypes.DEFAULT_TYPE, to
     messages = [{"role": "system", "content": "Ты — пацанский репетитор, объясняешь по-простому, без напряга."},
                 {"role": "user", "content": explain_prompt}]
     try:
-        explanation = await ask_deepseek(messages, timeout=15)
+        explanation = await ask_deepseek(messages, timeout=30)  # ← тут 30
         explanation = remove_markdown(explanation)
     except TimeoutError:
         explanation = "⏳ Нейросеть зависла, попробуй позже."
@@ -182,7 +182,7 @@ async def clear_history_callback(update: Update, context: ContextTypes.DEFAULT_T
     context.user_data["history"] = []
     context.user_data["waiting_for_grammar"] = False
     context.user_data.pop("msg_timestamps", None)
-    context.user_data.pop("shown_words", None)  # очищаем список показанных слов
+    context.user_data.pop("shown_words", None)
     await query.message.reply_text("🧹 История очищена!", reply_markup=get_main_keyboard())
 
 async def change_character_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -228,15 +228,12 @@ async def ask_grammar_callback(update: Update, context: ContextTypes.DEFAULT_TYP
         reply_markup=get_main_keyboard()
     )
 
-# ===== НОВАЯ функция случайного слова (запоминает все слова) =====
+# ===== Случайное слово с ассоциацией и защитой от повторов =====
 async def random_word_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
 
-    # Достаём список уже показанных слов (или создаём пустой)
     shown_words = context.user_data.setdefault("shown_words", [])
-
-    # Формируем запрет: "не предлагай слово из этого списка"
     exclude = ""
     if shown_words:
         exclude = "Не предлагай ни одно из этих слов: " + ", ".join(shown_words) + ".\n"
@@ -266,22 +263,20 @@ async def random_word_callback(update: Update, context: ContextTypes.DEFAULT_TYP
                 client.chat.completions.create,
                 model="deepseek-chat",
                 messages=messages,
-                temperature=1.0,          # максимальная случайность
+                temperature=1.0,
                 max_tokens=150
             ),
-            timeout=15
+            timeout=30  # ← тут тоже 30
         )
         word_text = word.choices[0].message.content
         word_text = remove_markdown(word_text)
 
-        # Извлекаем само слово из первой строки (после "Слово: ")
         first_line = word_text.split('\n')[0]
         if "Слово:" in first_line:
             clean_word = first_line.split("Слово:")[1].strip()
         else:
             clean_word = first_line.strip()
 
-        # Добавляем слово в список показанных (ограничим последние 50, чтобы не разрасталось)
         shown_words.append(clean_word)
         if len(shown_words) > 50:
             shown_words.pop(0)
