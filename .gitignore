@@ -5,3 +5,4 @@ venv/
 .idea/
 *.log
 bot/config.py
+bot_data.pickle

@@ -1,12 +1,20 @@
 import logging
 import re
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram.constants import ChatAction
 from telegram.ext import ContextTypes
+
 from .characters import CHARACTERS, DEFAULT_CHARACTER
 from .config import MAX_USER_MESSAGE_LENGTH
-from .utils import get_main_keyboard, generate_audio, ask_deepseek
-from .security import (is_flooding, check_daily_limit, contains_injection,
-                       sanitize_italian, remove_markdown)
+from .security import (
+    check_daily_limit,
+    contains_injection,
+    is_flooding,
+    remove_markdown,
+    sanitize_italian,
+)
+from .utils import ask_deepseek, generate_audio, get_main_keyboard
 
 logging.basicConfig(level=logging.INFO)
 
@@ -77,6 +85,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     history = context.user_data["history"][-10:]
     messages = [{"role": "system", "content": system_prompt}] + history + [{"role": "user", "content": user_text}]
 
+    if update.effective_chat:
+        await update.effective_chat.send_action(ChatAction.TYPING)
+
     try:
         answer = await ask_deepseek(messages, timeout=30)  # ← тут 30
         answer = remove_markdown(answer)
@@ -132,6 +143,8 @@ async def explain_grammar(update: Update, context: ContextTypes.DEFAULT_TYPE, to
     )
     messages = [{"role": "system", "content": "Ты — помощник, определяющий, относится ли тема к грамматике итальянского."},
                 {"role": "user", "content": check_prompt}]
+    if update.effective_chat:
+        await update.effective_chat.send_action(ChatAction.TYPING)
     try:
         check_response = await ask_deepseek(messages, timeout=10)
         is_grammar = bool(re.search(r"\bда\b", (check_response or "").lower()))
@@ -159,6 +172,8 @@ async def explain_grammar(update: Update, context: ContextTypes.DEFAULT_TYPE, to
     )
     messages = [{"role": "system", "content": "Ты — пацанский репетитор, объясняешь по-простому, без напряга."},
                 {"role": "user", "content": explain_prompt}]
+    if update.effective_chat:
+        await update.effective_chat.send_action(ChatAction.TYPING)
     try:
         explanation = await ask_deepseek(messages, timeout=30)  # ← тут 30
         explanation = remove_markdown(explanation)
@@ -259,6 +274,9 @@ async def random_word_callback(update: Update, context: ContextTypes.DEFAULT_TYP
         {"role": "system", "content": "Ты — генератор слов. Отвечай разнообразно, не повторяйся."},
         {"role": "user", "content": prompt}
     ]
+
+    if update.effective_chat:
+        await update.effective_chat.send_action(ChatAction.TYPING)
 
     try:
         word_text = await ask_deepseek(

@@ -1,13 +1,15 @@
-import io
 import asyncio
+import io
 import logging
 from typing import Optional
+
 from gtts import gTTS
-from openai import OpenAI
+from openai import APITimeoutError, AsyncOpenAI
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+
 from .config import DEEPSEEK_API_KEY, DEEPSEEK_MAX_TOKENS, TTS_MAX_LENGTH
 
-client = OpenAI(api_key=DEEPSEEK_API_KEY, base_url="https://api.deepseek.com")
+client = AsyncOpenAI(api_key=DEEPSEEK_API_KEY, base_url="https://api.deepseek.com")
 
 def get_main_keyboard():
     keyboard = [
@@ -69,10 +71,7 @@ async def ask_deepseek(messages, timeout=30, temperature=None, max_tokens=None):
         kwargs["temperature"] = temperature
 
     try:
-        response = await asyncio.wait_for(
-            asyncio.to_thread(client.chat.completions.create, **kwargs),
-            timeout=timeout,
-        )
-        return response.choices[0].message.content
-    except asyncio.TimeoutError:
-        raise TimeoutError("DeepSeek не ответил за отведённое время.")
+        response = await client.chat.completions.create(timeout=timeout, **kwargs)
+    except (APITimeoutError, TimeoutError) as exc:
+        raise TimeoutError("DeepSeek не ответил за отведённое время.") from exc
+    return response.choices[0].message.content

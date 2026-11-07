@@ -1,9 +1,12 @@
-import time
 import re
+import time
 from datetime import date
+
 from telegram import Update
 from telegram.ext import ContextTypes
-from .config import FLOOD_LIMIT, FLOOD_WINDOW, MAX_DAILY_MESSAGES, BLACKLIST_PHRASES
+
+from .config import BLACKLIST_PHRASES, FLOOD_LIMIT, FLOOD_WINDOW, MAX_DAILY_MESSAGES
+
 
 def is_flooding(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
     now = time.time()
