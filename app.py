@@ -1,6 +1,8 @@
 import asyncio
+import json
 import logging
 import os
+import tempfile
 import threading
 import time
 from flask import Flask, jsonify
@@ -32,15 +34,44 @@ application.add_handler(CallbackQueryHandler(back_to_main_callback, pattern="^ba
 application.add_handler(CallbackQueryHandler(ask_grammar_callback, pattern="^ask_grammar$"))
 application.add_handler(CallbackQueryHandler(random_word_callback, pattern="^random_word$"))
 
-BOT_STATE = {
-    "running": False,
-    "error": None,
-    "started_at": None,
-}
+# На PythonAnywhere приложение импортируется в master-процессе до fork,
+# поэтому статус polling пишем в файл: его читает worker, обслуживающий /healthz.
+STATUS_FILE = os.path.join(tempfile.gettempdir(), "italiano_bot_status.json")
+
+def _write_status(**fields):
+    payload = {
+        "updated_at": time.time(),
+        "running": False,
+        "error": None,
+        "started_at": None,
+    }
+    payload.update(fields)
+    tmp = STATUS_FILE + ".tmp"
+    try:
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(payload, f)
+        os.replace(tmp, STATUS_FILE)
+    except OSError:
+        logging.warning("Could not write bot status", exc_info=True)
+
+def _read_status():
+    try:
+        with open(STATUS_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, ValueError):
+        return None
+    try:
+        age = time.time() - float(data.get("updated_at", 0))
+    except (TypeError, ValueError):
+        return None
+    if age > 30:
+        return None
+    return data
 
 def start_polling():
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
+    started_at = time.time()
 
     # Инициализация ходит в Telegram, поэтому при недоступной сети ждём и пробуем снова.
     while True:
@@ -48,7 +79,7 @@ def start_polling():
             loop.run_until_complete(application.initialize())
             break
         except Exception as exc:
-            BOT_STATE.update(running=False, error=str(exc))
+            _write_status(running=False, error=str(exc))
             logging.warning("Bot initialization failed: %s; retrying in 30s", exc)
             loop.run_until_complete(asyncio.sleep(30))
 
@@ -64,11 +95,23 @@ def start_polling():
                 bootstrap_retries=5,
             )
         )
-        BOT_STATE.update(running=True, error=None, started_at=time.time())
+        _write_status(running=True, error=None, started_at=started_at)
         logging.info("Polling started")
+
+        async def heartbeat():
+            while True:
+                polling = bool(getattr(application.updater, "running", False))
+                _write_status(
+                    running=polling,
+                    error=None if polling else "polling stopped",
+                    started_at=started_at,
+                )
+                await asyncio.sleep(10)
+
+        loop.create_task(heartbeat())
         loop.run_forever()
     except Exception as exc:
-        BOT_STATE.update(running=False, error=str(exc))
+        _write_status(running=False, error=str(exc))
         logging.exception("Polling stopped")
 
 threading.Thread(target=start_polling, daemon=True).start()
@@ -79,13 +122,14 @@ def index():
 
 @app.route('/healthz')
 def healthz():
-    running = bool(BOT_STATE["running"])
-    payload = {
-        "status": "ok" if running else "error",
-        "running": running,
-        "error": BOT_STATE["error"],
-        "started_at": BOT_STATE["started_at"],
+    status_data = _read_status()
+    running = bool(status_data and status_data.get("running"))
+    payload = dict(status_data) if status_data else {
+        "running": False,
+        "error": "bot is not running",
+        "started_at": None,
     }
+    payload["status"] = "ok" if running else "error"
     return jsonify(payload), 200 if running else 503
 
 if __name__ == '__main__':
