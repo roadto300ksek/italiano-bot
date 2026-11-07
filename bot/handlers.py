@@ -1,9 +1,10 @@
 import logging
-import asyncio
+import re
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 from .characters import CHARACTERS, DEFAULT_CHARACTER
-from .utils import get_main_keyboard, generate_audio, ask_deepseek, client
+from .config import MAX_USER_MESSAGE_LENGTH
+from .utils import get_main_keyboard, generate_audio, ask_deepseek
 from .security import (is_flooding, check_daily_limit, contains_injection,
                        sanitize_italian, remove_markdown)
 
@@ -14,8 +15,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["history"] = []
     context.user_data["character"] = DEFAULT_CHARACTER
     context.user_data["waiting_for_grammar"] = False
-    context.user_data.pop("msg_timestamps", None)
-    context.user_data.pop("daily", None)
     context.user_data.pop("shown_words", None)
     await update.message.reply_text(
         "🇮🇹 Ciao! 🇷🇺 Привет!\nЯ — твой репетитор итальянского. Пиши что хочешь, я помогу.\nИспользуй кнопки ниже.",
@@ -32,7 +31,6 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def clear(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["history"] = []
     context.user_data["waiting_for_grammar"] = False
-    context.user_data.pop("msg_timestamps", None)
     context.user_data.pop("shown_words", None)
     await update.message.reply_text("🧹 История очищена!", reply_markup=get_main_keyboard())
 
@@ -44,9 +42,11 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_text = update.message.text
 
-    if len(user_text) > 500:
-        await update.message.reply_text("📜 Слишком длинное сообщение. Пожалуйста, будь короче (до 500 символов).",
-                                        reply_markup=get_main_keyboard())
+    if len(user_text) > MAX_USER_MESSAGE_LENGTH:
+        await update.message.reply_text(
+            f"📜 Слишком длинное сообщение. Пожалуйста, будь короче (до {MAX_USER_MESSAGE_LENGTH} символов).",
+            reply_markup=get_main_keyboard()
+        )
         return
 
     if is_flooding(update, context):
@@ -54,13 +54,13 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                                         reply_markup=get_main_keyboard())
         return
 
-    if check_daily_limit(update, context):
-        await update.message.reply_text("📅 Ты исчерпал дневной лимит сообщений. Возвращайся завтра!",
+    if contains_injection(user_text):
+        await update.message.reply_text("🤌 Ma che dici? Parliamo italiano! (Давай лучше об итальянском)",
                                         reply_markup=get_main_keyboard())
         return
 
-    if contains_injection(user_text):
-        await update.message.reply_text("🤌 Ma che dici? Parliamo italiano! (Давай лучше об итальянском)",
+    if check_daily_limit(update, context):
+        await update.message.reply_text("📅 Ты исчерпал дневной лимит сообщений. Возвращайся завтра!",
                                         reply_markup=get_main_keyboard())
         return
 
@@ -119,14 +119,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ===== Функция объяснения грамматики =====
 async def explain_grammar(update: Update, context: ContextTypes.DEFAULT_TYPE, topic: str):
-    if len(topic) > 500:
+    if len(topic) > MAX_USER_MESSAGE_LENGTH:
         await update.message.reply_text("📜 Слишком длинная тема. Будь короче.")
         return
     if contains_injection(topic):
         await update.message.reply_text("🤌 Scherzi? Parliamo di grammatica!")
-        return
-    if check_daily_limit(update, context):
-        await update.message.reply_text("📅 Дневной лимит исчерпан.")
         return
 
     check_prompt = (
@@ -137,10 +134,11 @@ async def explain_grammar(update: Update, context: ContextTypes.DEFAULT_TYPE, to
                 {"role": "user", "content": check_prompt}]
     try:
         check_response = await ask_deepseek(messages, timeout=10)
-        is_grammar = "да" in check_response.lower()
+        is_grammar = bool(re.search(r"\bда\b", (check_response or "").lower()))
     except Exception as e:
         logging.error(f"Ошибка проверки темы: {e}")
-        is_grammar = False
+        # Не выдаём сбой нейросети за «это не грамматика»: пробуем объяснить тему.
+        is_grammar = True
 
     if not is_grammar:
         context.user_data["waiting_for_grammar"] = True
@@ -168,7 +166,7 @@ async def explain_grammar(update: Update, context: ContextTypes.DEFAULT_TYPE, to
         explanation = "⏳ Нейросеть зависла, попробуй позже."
     except Exception as e:
         logging.error(f"Грамматика ошибка: {e}")
-        explanation = "😥 Бля, не смог объяснить. Попробуй ещё раз."
+        explanation = "😥 Не смог объяснить. Попробуй ещё раз."
 
     await update.message.reply_text(
         f"📖 {topic}\n\n{explanation}\n\n📌 Можешь спросить ещё тему или напиши /cancel, чтобы выйти.",
@@ -181,7 +179,6 @@ async def clear_history_callback(update: Update, context: ContextTypes.DEFAULT_T
     await query.answer()
     context.user_data["history"] = []
     context.user_data["waiting_for_grammar"] = False
-    context.user_data.pop("msg_timestamps", None)
     context.user_data.pop("shown_words", None)
     await query.message.reply_text("🧹 История очищена!", reply_markup=get_main_keyboard())
 
@@ -200,12 +197,11 @@ async def change_character_callback(update: Update, context: ContextTypes.DEFAUL
 async def set_character_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    character_key = query.data.split("_")[-1]
+    character_key = query.data.removeprefix("set_char_")
     if character_key in CHARACTERS:
         context.user_data["character"] = character_key
         context.user_data["history"] = []
         context.user_data["waiting_for_grammar"] = False
-        context.user_data.pop("msg_timestamps", None)
         await query.message.reply_text(
             f"✅ Выбран характер: {CHARACTERS[character_key]['name']}\nИстория очищена.",
             reply_markup=get_main_keyboard()
@@ -233,6 +229,13 @@ async def random_word_callback(update: Update, context: ContextTypes.DEFAULT_TYP
     query = update.callback_query
     await query.answer()
 
+    if is_flooding(update, context):
+        await query.message.reply_text("⏳ Слишком часто. Подожди немного и повтори.")
+        return
+    if check_daily_limit(update, context):
+        await query.message.reply_text("📅 Дневной лимит исчерпан.")
+        return
+
     shown_words = context.user_data.setdefault("shown_words", [])
     exclude = ""
     if shown_words:
@@ -258,17 +261,12 @@ async def random_word_callback(update: Update, context: ContextTypes.DEFAULT_TYP
     ]
 
     try:
-        word = await asyncio.wait_for(
-            asyncio.to_thread(
-                client.chat.completions.create,
-                model="deepseek-chat",
-                messages=messages,
-                temperature=1.0,
-                max_tokens=150
-            ),
-            timeout=30  # ← тут тоже 30
+        word_text = await ask_deepseek(
+            messages,
+            timeout=30,
+            temperature=1.0,
+            max_tokens=150,
         )
-        word_text = word.choices[0].message.content
         word_text = remove_markdown(word_text)
 
         first_line = word_text.split('\n')[0]

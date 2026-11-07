@@ -1,9 +1,6 @@
-# ===== ТОКЕНЫ  =====
+# ===== ТОКЕНЫ =====
 TELEGRAM_TOKEN = "ЗАГЛУШКА_ТОКЕНА_ОТ_BOTFATHER"
 DEEPSEEK_API_KEY = "ЗАГЛУШКА_КЛЮЧА_ОТ_DEEPSEEK"
-
-# ===== URL для вебхука =====
-WEBHOOK_URL = "https://Alex359359359.pythonanywhere.com/webhook"
 
 # ===== НАСТРОЙКИ БЕЗОПАСНОСТИ =====
 MAX_USER_MESSAGE_LENGTH = 500

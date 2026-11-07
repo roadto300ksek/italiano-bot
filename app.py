@@ -1,7 +1,9 @@
 import asyncio
 import logging
+import os
 import threading
-from flask import Flask
+import time
+from flask import Flask, jsonify
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, CallbackQueryHandler
 from bot.config import TELEGRAM_TOKEN
 from bot.handlers import (
@@ -30,18 +32,46 @@ application.add_handler(CallbackQueryHandler(back_to_main_callback, pattern="^ba
 application.add_handler(CallbackQueryHandler(ask_grammar_callback, pattern="^ask_grammar$"))
 application.add_handler(CallbackQueryHandler(random_word_callback, pattern="^random_word$"))
 
+BOT_STATE = {
+    "running": False,
+    "error": None,
+    "started_at": None,
+}
+
 def start_polling():
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
-    loop.run_until_complete(application.initialize())
-    loop.run_until_complete(application.start())
-    loop.run_until_complete(application.updater.bot.delete_webhook())
-    loop.run_until_complete(application.updater.start_polling())
-    logging.info("Polling started")
-    loop.run_forever()
+    try:
+        loop.run_until_complete(application.initialize())
+        loop.run_until_complete(application.start())
+        try:
+            loop.run_until_complete(application.bot.delete_webhook(drop_pending_updates=True))
+        except Exception:
+            logging.warning("Could not delete webhook; continuing with polling", exc_info=True)
+        loop.run_until_complete(application.updater.start_polling(drop_pending_updates=True))
+        BOT_STATE.update(running=True, error=None, started_at=time.time())
+        logging.info("Polling started")
+        loop.run_forever()
+    except Exception as exc:
+        BOT_STATE.update(running=False, error=str(exc))
+        logging.exception("Polling stopped")
 
 threading.Thread(target=start_polling, daemon=True).start()
 
 @app.route('/')
 def index():
     return 'Bot is running!'
+
+@app.route('/healthz')
+def healthz():
+    running = bool(BOT_STATE["running"])
+    payload = {
+        "status": "ok" if running else "error",
+        "running": running,
+        "error": BOT_STATE["error"],
+        "started_at": BOT_STATE["started_at"],
+    }
+    return jsonify(payload), 200 if running else 503
+
+if __name__ == '__main__':
+    app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)))
