@@ -41,14 +41,29 @@ BOT_STATE = {
 def start_polling():
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
+
+    # Инициализация ходит в Telegram, поэтому при недоступной сети ждём и пробуем снова.
+    while True:
+        try:
+            loop.run_until_complete(application.initialize())
+            break
+        except Exception as exc:
+            BOT_STATE.update(running=False, error=str(exc))
+            logging.warning("Bot initialization failed: %s; retrying in 30s", exc)
+            loop.run_until_complete(asyncio.sleep(30))
+
     try:
-        loop.run_until_complete(application.initialize())
         loop.run_until_complete(application.start())
         try:
             loop.run_until_complete(application.bot.delete_webhook(drop_pending_updates=True))
         except Exception:
             logging.warning("Could not delete webhook; continuing with polling", exc_info=True)
-        loop.run_until_complete(application.updater.start_polling(drop_pending_updates=True))
+        loop.run_until_complete(
+            application.updater.start_polling(
+                drop_pending_updates=True,
+                bootstrap_retries=5,
+            )
+        )
         BOT_STATE.update(running=True, error=None, started_at=time.time())
         logging.info("Polling started")
         loop.run_forever()
